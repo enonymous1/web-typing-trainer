@@ -132,6 +132,10 @@ main {
   cursor: text;
   border-radius: 8px;
   padding: 4px 2px;
+  /* Belt and braces with the regular spaces in Passage.tsx: even a long
+     unbroken token (e.g. a Hard-mode 'well-known') must wrap inside the
+     card instead of running off its right edge. */
+  overflow-wrap: break-word;
 }
 .char { border-radius: 3px; }
 .char-ok { color: var(--ok); }

@@ -62,9 +62,15 @@ export default function Passage({
           let cls = 'char';
           if (i < typed.length) cls += typed[i] === ch ? ' char-ok' : ' char-bad';
           else if (i === typed.length) cls += ' char-current';
+          // Spaces stay regular spaces on purpose: rendering them as
+          // non-breaking spaces (\u00A0) removed every line-break
+          // opportunity, so the whole passage became one unbreakable
+          // line that ran off the right edge of the card. A regular
+          // space in its own span still renders, and the browser may
+          // wrap after it. (Caught 2026-11-07 from a screenshot.)
           return (
             <span key={i} className={cls}>
-              {ch === ' ' ? '\u00A0' : ch}
+              {ch}
             </span>
           );
         })}
