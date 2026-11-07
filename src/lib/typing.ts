@@ -3,6 +3,24 @@ import type { Difficulty } from './words';
 
 export type { Difficulty };
 
+/** How many words one practice round samples from a drill's word list. */
+export const DRILL_ROUND_WORDS = 48;
+
+/** Default passage length (characters) for char-sequence drills. */
+export const DEFAULT_CHAR_DRILL_LENGTH = 120;
+
+// Passage-generation probabilities, tuned by feel rather than measured:
+// they control how "spicy" Medium/Hard text is, not correctness.
+const MEDIUM_CAPITALIZE_PROBABILITY = 0.25;
+const MEDIUM_PUNCTUATION_PROBABILITY = 0.18;
+const HARD_TOKEN_PROBABILITY = 0.3;
+const HARD_CAPITALIZE_PROBABILITY = 0.3;
+const HARD_PUNCTUATION_PROBABILITY = 0.25;
+/** Chance a focus-drill character comes from the weak-key pool vs filler. */
+const FOCUS_WEAK_POOL_PROBABILITY = 0.66;
+/** Chance a char-drill position is a space (word separator) vs a key. */
+const CHAR_DRILL_SPACE_PROBABILITY = 0.18;
+
 export interface CharStats {
   correct: number;
   incorrect: number;
@@ -16,6 +34,24 @@ export function charStats(typed: string, target: string): CharStats {
     if (typed[i] === target[i]) correct += 1;
   }
   return { correct, incorrect: typed.length - correct, total: typed.length };
+}
+
+/**
+ * Per-character mistake counts for one typed passage: each position
+ * where `typed` differs from `target` adds one to the *expected*
+ * character's count (lowercased, so 'A' and 'a' train the same key).
+ * Shared by Test mode and Practice mode so both feed the Weak Keys
+ * model from the same definition of "a mistake".
+ */
+export function mistakesFor(typed: string, target: string): Record<string, number> {
+  const mistakes: Record<string, number> = {};
+  for (let i = 0; i < typed.length; i += 1) {
+    if (typed[i] !== target[i]) {
+      const key = target[i].toLowerCase();
+      mistakes[key] = (mistakes[key] ?? 0) + 1;
+    }
+  }
+  return mistakes;
 }
 
 /**
@@ -71,8 +107,8 @@ export function generateTestText(
     const picked: string[] = [];
     for (let i = 0; i < count; i += 1) {
       let word = COMMON_WORDS[Math.floor(rng() * COMMON_WORDS.length)];
-      if (rng() < 0.25) word = capitalize(word);
-      if (rng() < 0.18) word = withPunctuation(word, rng);
+      if (rng() < MEDIUM_CAPITALIZE_PROBABILITY) word = capitalize(word);
+      if (rng() < MEDIUM_PUNCTUATION_PROBABILITY) word = withPunctuation(word, rng);
       picked.push(word);
     }
     return picked.join(' ');
@@ -80,12 +116,12 @@ export function generateTestText(
   // hard
   const picked: string[] = [];
   for (let i = 0; i < count; i += 1) {
-    if (rng() < 0.3) {
+    if (rng() < HARD_TOKEN_PROBABILITY) {
       picked.push(HARD_TOKENS[Math.floor(rng() * HARD_TOKENS.length)]);
     } else {
       let word = COMMON_WORDS[Math.floor(rng() * COMMON_WORDS.length)];
-      if (rng() < 0.3) word = capitalize(word);
-      if (rng() < 0.25) word = withPunctuation(word, rng);
+      if (rng() < HARD_CAPITALIZE_PROBABILITY) word = capitalize(word);
+      if (rng() < HARD_PUNCTUATION_PROBABILITY) word = withPunctuation(word, rng);
       picked.push(word);
     }
   }
@@ -116,18 +152,38 @@ export function weakestKeys(
  */
 export function buildFocusText(
   weak: string[],
-  length = 120,
+  length = DEFAULT_CHAR_DRILL_LENGTH,
   rng: () => number = Math.random,
 ): string {
   const keys = weak.length > 0 ? weak : ['a', 's', 'd', 'f', 'j', 'k', 'l', ';'];
   const filler = ['a', 's', 'd', 'f', 'j', 'k', 'l', ' '];
   const chars: string[] = [];
   for (let i = 0; i < length; i += 1) {
-    const pool = rng() < 0.66 ? keys : filler;
+    const pool = rng() < FOCUS_WEAK_POOL_PROBABILITY ? keys : filler;
     chars.push(pool[Math.floor(rng() * pool.length)]);
   }
   // Avoid doubled spaces and leading/trailing space.
   return chars.join('').replace(/ {2,}/g, ' ').trim();
+}
+
+/**
+ * Build a char-sequence drill passage from a key set that cannot spell
+ * real words — the bottom row has no vowels, so this samples the keys
+ * uniformly in short space-separated groups instead of sampling words.
+ * Spaces are separators only; every non-space character is a drill key.
+ */
+export function buildCharDrillText(
+  chars: string[],
+  length = DEFAULT_CHAR_DRILL_LENGTH,
+  rng: () => number = Math.random,
+): string {
+  if (chars.length === 0 || length <= 0) return '';
+  const out: string[] = [];
+  for (let i = 0; i < length; i += 1) {
+    out.push(rng() < CHAR_DRILL_SPACE_PROBABILITY ? ' ' : chars[Math.floor(rng() * chars.length)]);
+  }
+  // Avoid doubled spaces and leading/trailing space.
+  return out.join('').replace(/ {2,}/g, ' ').trim();
 }
 
 /** Longest run of consecutive correct characters in `typed` vs `target`. */

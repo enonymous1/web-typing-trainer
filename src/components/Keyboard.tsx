@@ -18,8 +18,28 @@ const ROWS: string[][] = [
 ];
 
 /**
- * Finger zone for a key: 0 left pinky … 7 right pinky, 4 = space (thumbs).
- * Zones colour the keyboard so the user learns which finger owns each key.
+ * Finger zone for a key, 0–7 left to right.
+ *
+ * Honest caveats, documented rather than silently "fixed":
+ *
+ * - The mapping is by keyboard COLUMN, not by strict touch-typing
+ *   finger: the right home row maps j → 5, k → 6, l → 7, where strict
+ *   touch typing would put j/k/l/; on the right index/middle/ring/pinky
+ *   (4/5/6/7). The colours still teach column position, but they are
+ *   not a touch-typing finger chart.
+ * - Zone 4 is shared: it covers both the thumbs (space) and the right
+ *   index column (6 y u h n). The 8-zone scheme has one zone per
+ *   finger, and the thumbs share with the right index.
+ * - The bottom row is inconsistent: x → 1, c → 2, v/b → 3, n → 4,
+ *   m → 5, but z matches no column group and falls through to the
+ *   default 4. A future pass should give z (and the number row) an
+ *   explicit column instead of relying on the fallback.
+ * - Keys not drawn on the keyboard (/, ', -, =, [, ], \) can never
+ *   highlight; `/` maps to zone 7, the rest fall through to the
+ *   default zone 4. If those keys are ever rendered, give them
+ *   explicit zones instead of the fallback.
+ * - Any other unknown key falls back to zone 4 (space/thumbs) rather
+ *   than throwing, so a stray character never breaks the render.
  */
 export function zoneFor(key: string): number {
   const k = key.toLowerCase();

@@ -252,6 +252,21 @@ main {
 
 .footer { max-width: 860px; margin: 20px auto 0; color: var(--muted); font-size: 0.9rem; }
 
+/* Error boundary fallback: same card language as the rest of the app. */
+.error-fallback {
+  background: var(--bad-soft);
+  border: 1px solid var(--bad);
+  border-radius: 10px;
+  padding: 20px;
+}
+.error-fallback h2 { margin: 0 0 8px; color: var(--bad); }
+.error-fallback code {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
 @media (max-width: 640px) {
   .header h1 { font-size: 1.5rem; }
   .passage { font-size: 1.05rem; }

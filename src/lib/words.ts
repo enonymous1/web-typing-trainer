@@ -4,7 +4,7 @@
 
 export const COMMON_WORDS: string[] = [
   'the', 'of', 'and', 'a', 'to', 'in', 'is', 'you', 'that', 'it',
-  'he', 'was', 'for', 'on', 'are', 'as', 'with', 'his', 'they', 'I',
+  'he', 'was', 'for', 'on', 'are', 'as', 'with', 'his', 'they',
   'at', 'be', 'this', 'have', 'from', 'or', 'one', 'had', 'by', 'word',
   'but', 'not', 'what', 'all', 'were', 'we', 'when', 'your', 'can', 'said',
   'there', 'use', 'an', 'each', 'which', 'she', 'do', 'how', 'their', 'if',
@@ -46,21 +46,45 @@ export const HARD_TOKENS: string[] = [...SYMBOL_TOKENS];
 
 export type Difficulty = 'easy' | 'medium' | 'hard';
 
+/**
+ * Uppercase the first letter. Used by the Medium/Hard generators to
+ * sprinkle sentence-style capitals into a passage — applied to a word
+ * that is otherwise lowercase, so Easy text stays all-lowercase.
+ */
 export function capitalize(word: string): string {
   return word.charAt(0).toUpperCase() + word.slice(1);
 }
 
+/**
+ * Append one random end-of-sentence mark. Used by the Medium/Hard
+ * generators to sprinkle sentence-style punctuation into a passage —
+ * the mark is always trailing so the word itself stays typable as-is.
+ */
 export function withPunctuation(word: string, rng: () => number): string {
   const mark = PUNCTUATION[Math.floor(rng() * PUNCTUATION.length)];
   return word + mark;
 }
 
-/** Drill definitions for Practice mode. `chars` is the key set the drill trains. */
+/**
+ * Drill definitions for Practice mode.
+ *
+ * `chars` is the key set the drill trains. For a `'words'` drill it is a
+ * hard constraint — every word in `words` must use only those keys —
+ * except Common Words (see below). For a `'chars'` drill the passage is
+ * random key sequences, not words, because real words are impossible
+ * for that key set (the bottom row has no vowels).
+ *
+ * `kind` selects how the passage is built: `'words'` samples from
+ * `words`, `'chars'` samples characters from `chars`. The Weak Keys
+ * drill is `'chars'` with an empty word list: its text comes from
+ * `buildFocusText`, not from this table.
+ */
 export interface Drill {
   id: string;
   label: string;
   blurb: string;
   chars: string;
+  kind: 'words' | 'chars';
   words: string[];
 }
 
@@ -70,34 +94,49 @@ export const DRILLS: Drill[] = [
     label: 'Home Row',
     blurb: 'a s d f j k l ; — where your fingers live.',
     chars: 'asdfjkl;',
-    words: ['a', 'as', 'sad', 'fad', 'dad', 'all', 'ask', 'fall', 'lass', 'flask', 'salsa', 'alaska', 'adds', 'fads', 'jazz', 'lad', 'salad', 'shall', 'flash', 'glass', 'dad', 'fad', 'ask'],
+    kind: 'words',
+    // Purity rule: every word uses only home-row keys — no 'z' (jazz),
+    // no 'h' (shall, flash), no 'g' (glass), and no duplicates.
+    words: ['a', 'as', 'sad', 'fad', 'dad', 'all', 'ask', 'fall', 'lass', 'flask', 'salsa', 'alaska', 'adds', 'fads', 'lad', 'salad'],
   },
   {
     id: 'top',
     label: 'Top Row',
     blurb: 'q w e r t y u i o p — reach up, come back home.',
     chars: 'qwertyuiop',
+    kind: 'words',
     words: ['we', 'wet', 'wit', 'quit', 'type', 'tower', 'power', 'write', 'quiet', 'quite', 'tree', 'true', 'trio', 'pup', 'top', 'pot', 'rip', 'yet', 'you', 'out', 'our', 'pour', 'trip', 'tire', 'wire', 'wrote'],
   },
   {
     id: 'bottom',
     label: 'Bottom Row',
-    blurb: 'z x c v b n m , . — the row below home.',
+    // The bottom row has no vowels, so no English word can be spelled
+    // with bottom-row keys alone — a word list is impossible here by
+    // construction. This drill trains bottom-row key sequences instead.
+    blurb: 'z x c v b n m , . — the row below home. No vowels live here, so this drill trains key sequences, not words.',
     chars: 'zxcvbnm,.',
-    words: ['van', 'can', 'man', 'box', 'mix', 'vim', 'buzz', 'civic', 'zinc', 'max', 'vex', 'mob', 'moon', 'zoom', 'bend', 'camp', 'comb', 'bomb', 'numb', 'verb', 'zone', 'maze', 'zebra'],
+    kind: 'chars',
+    words: [],
   },
   {
     id: 'numbers',
     label: 'Numbers',
     blurb: 'Digits and common number patterns.',
     chars: '0123456789',
-    words: ['12', '34', '56', '78', '90', '123', '456', '789', '2026', '100', '42', '7', '99', '365', '24', '60', '1000', '3.14', '19', '25', '80', '15', '30', '11'],
+    kind: 'words',
+    words: ['12', '34', '56', '78', '90', '123', '456', '789', '2026', '100', '42', '7', '99', '365', '24', '60', '1000', '314', '19', '25', '80', '15', '30', '11'],
   },
   {
     id: 'common',
     label: 'Common Words',
     blurb: 'The words you type most often, on repeat.',
+    // 'etaoinshrdlu' is the twelve most frequent letters in English, in
+    // frequency order — a hint about which keys matter most, NOT a
+    // constraint: these are real words, so they use letters outside the
+    // set ('of' needs f, 'you' needs y and u). The purity test in
+    // words.test.ts deliberately exempts this drill.
     chars: 'etaoinshrdlu',
+    kind: 'words',
     words: COMMON_WORDS.slice(0, 60),
   },
   {
@@ -105,6 +144,7 @@ export const DRILLS: Drill[] = [
     label: 'Weak Keys',
     blurb: 'Built from your own mistakes — your weakest keys, more often.',
     chars: '',
+    kind: 'chars',
     words: [],
   },
 ];

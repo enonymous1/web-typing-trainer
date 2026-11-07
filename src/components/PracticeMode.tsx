@@ -1,15 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { DRILLS } from '../lib/words';
 import {
+  DEFAULT_CHAR_DRILL_LENGTH,
+  DRILL_ROUND_WORDS,
+  buildCharDrillText,
   buildFocusText,
   calcAccuracy,
   calcWPM,
   charStats,
   generateText,
+  mistakesFor,
   weakestKeys,
 } from '../lib/typing';
-import { getMistakes } from '../lib/storage';
+import { getMistakes, recordMistakes } from '../lib/storage';
 import Keyboard from './Keyboard';
+import Passage from './Passage';
+import { useToast } from '../hooks/useToast';
 
 interface KeyStats {
   correct: number;
@@ -20,76 +26,71 @@ function drillText(drillId: string): { text: string; note: string } {
   if (drillId === 'weak') {
     const weak = weakestKeys(getMistakes(), 5);
     return {
-      text: buildFocusText(weak, 120),
+      text: buildFocusText(weak, DEFAULT_CHAR_DRILL_LENGTH),
       note:
         weak.length > 0
           ? `Focusing on your weakest keys: ${weak.join(' · ')}`
-          : 'No mistakes recorded yet — warming up on the home row. Finish a test and your weak keys will show up here.',
+          : 'No mistakes recorded yet — warming up on the home row. Finish a test or a practice round and your weak keys will show up here.',
     };
   }
   const drill = DRILLS.find((d) => d.id === drillId) ?? DRILLS[0];
-  return { text: generateText(drill.words, 48), note: drill.blurb };
+  // Char drills (bottom row) cannot spell words, so their passage is
+  // random key sequences; word drills sample the drill's word list.
+  if (drill.kind === 'chars') {
+    return { text: buildCharDrillText(drill.chars.split('')), note: drill.blurb };
+  }
+  return { text: generateText(drill.words, DRILL_ROUND_WORDS), note: drill.blurb };
 }
 
 export default function PracticeMode() {
   const [drillId, setDrillId] = useState('home');
-  const [text, setText] = useState(() => drillText('home').text);
-  const [note, setNote] = useState(() => drillText('home').note);
+  // One lazy initializer draws the opening drill text exactly once —
+  // two separate useState(() => drillText('home')) calls used to draw
+  // (and discard) it twice.
+  const [round, setRound] = useState(() => drillText('home'));
+  const { text, note } = round;
   const [typed, setTyped] = useState('');
   const [elapsed, setElapsed] = useState(0);
+  // The live clock only runs while a round is in progress. It starts on
+  // the first keystroke of a round and stops (with elapsed reset) when
+  // the round completes or the drill changes — so WPM never decays
+  // between rounds from a clock that kept ticking.
+  const [clockActive, setClockActive] = useState(false);
   const [keyStats, setKeyStats] = useState<Record<string, KeyStats>>({});
-  const [toast, setToast] = useState<string | null>(null);
+  const { toast, showToast, dismissToast } = useToast();
 
   const inputRef = useRef<HTMLInputElement>(null);
-  const sessionStartRef = useRef<number>(0);
   const roundStartRef = useRef<number>(0);
   const typedRef = useRef('');
-  const textRef = useRef(text);
-  textRef.current = text;
 
   const focusInput = () => inputRef.current?.focus();
 
   useEffect(() => {
-    focusInput();
-  }, []);
-
-  useEffect(() => {
-    if (!toast) return;
-    const t = window.setTimeout(() => setToast(null), 3000);
-    return () => window.clearTimeout(t);
-  }, [toast]);
-
-  // Live clock once the session has started; elapsed tracks the current
-  // round so the round WPM stays meaningful after a round completes.
-  useEffect(() => {
-    if (sessionStartRef.current === 0) return;
+    if (!clockActive) return;
     const id = window.setInterval(() => {
-      const base = roundStartRef.current || sessionStartRef.current;
-      setElapsed((Date.now() - base) / 1000);
+      setElapsed((Date.now() - roundStartRef.current) / 1000);
     }, 200);
     return () => window.clearInterval(id);
-  }, [typed.length > 0]);
+  }, [clockActive]);
 
   function loadDrill(nextId: string) {
-    const { text: nextText, note: nextNote } = drillText(nextId);
+    setRound(drillText(nextId));
     setDrillId(nextId);
-    setText(nextText);
-    setNote(nextNote);
     setTyped('');
     typedRef.current = '';
-    setToast(null);
+    dismissToast();
     roundStartRef.current = 0;
+    setClockActive(false);
+    setElapsed(0);
     window.setTimeout(focusInput, 0);
   }
 
   function handleChange(value: string) {
     const next = value.slice(0, text.length);
     const prev = typedRef.current;
-    if (sessionStartRef.current === 0 && next.length > 0) {
-      sessionStartRef.current = Date.now();
-    }
     if (roundStartRef.current === 0 && next.length > 0) {
       roundStartRef.current = Date.now();
+      setClockActive(true);
     }
     // Only newly typed characters count toward per-key accuracy.
     if (next.length > prev.length) {
@@ -109,18 +110,22 @@ export default function PracticeMode() {
     setTyped(next);
     typedRef.current = next;
     if (next.length === text.length && next.length > 0) {
-      setToast('✅ Round complete — new drill text loaded!');
-      const { text: nextText } = drillText(drillId);
-      setText(nextText);
+      // Practice counts too: feed this round's mistakes into the Weak
+      // Keys model, or practicing would never improve it.
+      recordMistakes(mistakesFor(next, text));
+      showToast('✅ Round complete — new drill text loaded!');
+      setRound(drillText(drillId));
       setTyped('');
       typedRef.current = '';
       roundStartRef.current = 0;
+      setClockActive(false);
+      setElapsed(0);
     }
   }
 
   const stats = charStats(typed, text);
   const liveWpm =
-    roundStartRef.current === 0
+    !clockActive
       ? 0
       : calcWPM(stats.correct, Math.max(elapsed, 0.1));
   const accuracy = calcAccuracy(stats.correct, stats.total);
@@ -165,43 +170,14 @@ export default function PracticeMode() {
         </div>
       </div>
 
-      <div className="progress" aria-hidden="true">
-        <div
-          className="progress-fill"
-          style={{ width: `${(typed.length / text.length) * 100}%` }}
-        />
-      </div>
-
-      <div className="passage" onClick={focusInput} role="button" tabIndex={-1}>
-        {text.split('').map((ch, i) => {
-          let cls = 'char';
-          if (i < typed.length) cls += typed[i] === ch ? ' char-ok' : ' char-bad';
-          else if (i === typed.length) cls += ' char-current';
-          return (
-            <span key={i} className={cls}>
-              {ch === ' ' ? '\u00A0' : ch}
-            </span>
-          );
-        })}
-        <input
-          ref={inputRef}
-          className="hidden-input"
-          type="text"
-          autoCapitalize="off"
-          autoComplete="off"
-          autoCorrect="off"
-          spellCheck={false}
-          aria-label="Type here to practise"
-          value={typed}
-          onChange={(e) => handleChange(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Tab') {
-              e.preventDefault();
-              loadDrill(drillId);
-            }
-          }}
-        />
-      </div>
+      <Passage
+        text={text}
+        typed={typed}
+        inputRef={inputRef}
+        inputLabel="Type here to practise"
+        onChange={handleChange}
+        onTab={() => loadDrill(drillId)}
+      />
       <p className="hint">
         No timer, no pressure — finish a round and a fresh one loads. <kbd>Tab</kbd> =
         new drill text.

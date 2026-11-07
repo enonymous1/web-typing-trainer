@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   calcAccuracy,
   calcRawWPM,
@@ -7,6 +7,7 @@ import {
   currentStreak,
   generateTestText,
   maxStreak,
+  mistakesFor,
 } from '../lib/typing';
 import type { Difficulty } from '../lib/words';
 import {
@@ -19,6 +20,8 @@ import {
 import type { HistoryEntry } from '../lib/storage';
 import Results from './Results';
 import type { TestResult } from './Results';
+import Passage from './Passage';
+import { useToast } from '../hooks/useToast';
 
 const DURATIONS = [15, 30, 60] as const;
 const DIFFICULTIES: Difficulty[] = ['easy', 'medium', 'hard'];
@@ -36,66 +39,60 @@ export default function TestMode() {
   const [elapsed, setElapsed] = useState(0);
   const [result, setResult] = useState<TestResult | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>(() => getHistory());
-  const [toast, setToast] = useState<string | null>(null);
+  const { toast, showToast, dismissToast } = useToast();
 
   const inputRef = useRef<HTMLInputElement>(null);
   const startRef = useRef<number>(0);
   const typedRef = useRef('');
   const textRef = useRef(text);
   const toastedStreaks = useRef<Set<number>>(new Set());
-  textRef.current = text;
+
+  // Keep the timer's view of the passage in sync. (Assigned in an
+  // effect, not during render, so StrictMode double-rendering is safe.)
+  useEffect(() => {
+    textRef.current = text;
+  }, [text]);
 
   const focusInput = () => inputRef.current?.focus();
 
-  useEffect(() => {
-    focusInput();
-  }, []);
-
-  useEffect(() => {
-    if (!toast) return;
-    const t = window.setTimeout(() => setToast(null), 3000);
-    return () => window.clearTimeout(t);
-  }, [toast]);
-
-  function finishTest(typedValue: string, elapsedSec: number, target: string) {
-    const stats = charStats(typedValue, target);
-    const wpm = calcWPM(stats.correct, elapsedSec);
-    const rawWpm = calcRawWPM(stats.total, elapsedSec);
-    const accuracy = calcAccuracy(stats.correct, stats.total);
-    const isBest = saveBest(duration, difficulty, wpm);
-    const best = getBest(duration, difficulty);
-    const mistakes: Record<string, number> = {};
-    for (let i = 0; i < typedValue.length; i += 1) {
-      if (typedValue[i] !== target[i]) {
-        const key = target[i].toLowerCase();
-        mistakes[key] = (mistakes[key] ?? 0) + 1;
-      }
-    }
-    recordMistakes(mistakes);
-    setHistory(
-      addHistory({
+  // Stable across renders for a given (duration, difficulty), so the
+  // timer effect can depend on it without a lint suppression — the
+  // finish-time duration/difficulty are always the ones in effect.
+  const finishTest = useCallback(
+    (typedValue: string, elapsedSec: number, target: string) => {
+      const stats = charStats(typedValue, target);
+      const wpm = calcWPM(stats.correct, elapsedSec);
+      const rawWpm = calcRawWPM(stats.total, elapsedSec);
+      const accuracy = calcAccuracy(stats.correct, stats.total);
+      const isBest = saveBest(duration, difficulty, wpm);
+      const best = getBest(duration, difficulty);
+      recordMistakes(mistakesFor(typedValue, target));
+      setHistory(
+        addHistory({
+          wpm,
+          rawWpm,
+          accuracy,
+          duration,
+          difficulty,
+          date: new Date().toISOString(),
+        }),
+      );
+      setResult({
         wpm,
         rawWpm,
         accuracy,
+        correct: stats.correct,
+        incorrect: stats.incorrect,
         duration,
         difficulty,
-        date: new Date().toISOString(),
-      }),
-    );
-    setResult({
-      wpm,
-      rawWpm,
-      accuracy,
-      correct: stats.correct,
-      incorrect: stats.incorrect,
-      duration,
-      difficulty,
-      isBest,
-      best,
-    });
-    setStatus('finished');
-    if (isBest) setToast('🏆 New personal best!');
-  }
+        isBest,
+        best,
+      });
+      setStatus('finished');
+      if (isBest) showToast('🏆 New personal best!');
+    },
+    [duration, difficulty, showToast],
+  );
 
   // Timer: ticks while running, finishes at the duration.
   useEffect(() => {
@@ -111,22 +108,29 @@ export default function TestMode() {
       }
     }, 100);
     return () => window.clearInterval(id);
-    // finishTest reads duration/difficulty from state at finish time; the
-    // interval is recreated whenever the running status changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, duration]);
+  }, [status, duration, finishTest]);
 
-  function newRound(nextDuration: number, nextDifficulty: Difficulty) {
-    const nextText = generateTestText(nextDifficulty, WORDS_FOR[nextDuration]);
-    setText(nextText);
+  /** Reset the round state (typed text, clock, result) for a (re)start. */
+  function resetRound() {
     setTyped('');
     typedRef.current = '';
     setElapsed(0);
     setStatus('idle');
     setResult(null);
-    setToast(null);
+    dismissToast();
     toastedStreaks.current = new Set();
     window.setTimeout(focusInput, 0);
+  }
+
+  /** Restart the SAME passage — for retrying a text you want to master. */
+  function restartRound() {
+    resetRound();
+  }
+
+  /** Start a NEW passage with fresh random text. */
+  function newRound(nextDuration: number, nextDifficulty: Difficulty) {
+    setText(generateTestText(nextDifficulty, WORDS_FOR[nextDuration]));
+    resetRound();
   }
 
   function handleChange(value: string) {
@@ -142,7 +146,7 @@ export default function TestMode() {
     for (const milestone of STREAK_MILESTONES) {
       if (streak >= milestone && !toastedStreaks.current.has(milestone)) {
         toastedStreaks.current.add(milestone);
-        setToast(`🔥 ${milestone}-character streak — keep going!`);
+        showToast(`🔥 ${milestone}-character streak — keep going!`);
       }
     }
     if (next.length === text.length && next.length > 0) {
@@ -219,52 +223,17 @@ export default function TestMode() {
         </div>
       </div>
 
-      <div className="progress" aria-hidden="true">
-        <div
-          className="progress-fill"
-          style={{ width: `${(typed.length / text.length) * 100}%` }}
-        />
-      </div>
-
-      <div
-        className="passage"
-        onClick={focusInput}
-        role="button"
-        tabIndex={-1}
-        aria-label="Typing passage — tap to focus and start typing"
-      >
-        {text.split('').map((ch, i) => {
-          let cls = 'char';
-          if (i < typed.length) cls += typed[i] === ch ? ' char-ok' : ' char-bad';
-          else if (i === typed.length) cls += ' char-current';
-          return (
-            <span key={i} className={cls}>
-              {ch === ' ' ? '\u00A0' : ch}
-            </span>
-          );
-        })}
-        <input
-          ref={inputRef}
-          className="hidden-input"
-          type="text"
-          autoCapitalize="off"
-          autoComplete="off"
-          autoCorrect="off"
-          spellCheck={false}
-          aria-label="Type here"
-          value={typed}
-          onChange={(e) => handleChange(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Tab') {
-              e.preventDefault();
-              newRound(duration, difficulty);
-            }
-          }}
-        />
-      </div>
+      <Passage
+        text={text}
+        typed={typed}
+        inputRef={inputRef}
+        inputLabel="Type here"
+        onChange={handleChange}
+        onTab={restartRound}
+      />
       <p className="hint">
         Tap the text to focus (mobile too) and just start typing — the clock
-        starts on your first keystroke. <kbd>Tab</kbd> = new test.
+        starts on your first keystroke. <kbd>Tab</kbd> = restart this text.
       </p>
 
       {toast && (
@@ -274,7 +243,7 @@ export default function TestMode() {
       )}
 
       <div className="actions">
-        <button type="button" onClick={() => newRound(duration, difficulty)}>
+        <button type="button" onClick={restartRound}>
           ↻ Restart (Tab)
         </button>
         <button type="button" onClick={() => newRound(duration, difficulty)}>
@@ -286,7 +255,7 @@ export default function TestMode() {
         <Results
           result={result}
           history={history}
-          onRestart={() => newRound(duration, difficulty)}
+          onRestart={restartRound}
           onNewText={() => newRound(duration, difficulty)}
         />
       )}

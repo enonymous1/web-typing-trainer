@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildCharDrillText,
   buildFocusText,
   calcAccuracy,
   calcRawWPM,
@@ -9,6 +10,7 @@ import {
   generateTestText,
   generateText,
   maxStreak,
+  mistakesFor,
   weakestKeys,
 } from './typing';
 import { COMMON_WORDS } from './words';
@@ -122,6 +124,30 @@ describe('buildFocusText', () => {
     const text = buildFocusText([], 40, () => 0.5);
     expect(text.length).toBeGreaterThan(0);
     expect(text).toMatch(/^[asdfjkl; ]+$/);
+  });
+});
+
+describe('mistakesFor', () => {
+  it('counts mistakes against the expected character, lowercased', () => {
+    expect(mistakesFor('hallo', 'hello')).toEqual({ e: 1 });
+    expect(mistakesFor('HXllo', 'hello')).toEqual({ e: 1, h: 1 });
+    expect(mistakesFor('hello', 'hello')).toEqual({});
+    expect(mistakesFor('', 'hello')).toEqual({});
+  });
+});
+
+describe('buildCharDrillText', () => {
+  it('uses only the given keys plus spaces, with no doubled spaces', () => {
+    const text = buildCharDrillText(['z', 'x', 'c'], 200, () => 0.5);
+    expect(text.length).toBeGreaterThan(0);
+    expect(text).toMatch(/^[zxc ]+$/);
+    expect(text).not.toMatch(/  /);
+    expect(text).toBe(text.trim());
+  });
+
+  it('returns empty for an empty key set or zero length', () => {
+    expect(buildCharDrillText([], 50)).toBe('');
+    expect(buildCharDrillText(['z'], 0)).toBe('');
   });
 });
 
